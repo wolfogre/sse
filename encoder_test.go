@@ -43,8 +43,10 @@ import (
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/json"
-
 	"github.com/cloudwego/hertz/pkg/common/test/assert"
+	"github.com/cloudwego/hertz/pkg/network"
+	"github.com/cloudwego/hertz/pkg/protocol"
+	"github.com/cloudwego/hertz/pkg/protocol/http1/resp"
 )
 
 type myStruct struct {
@@ -257,4 +259,53 @@ func BenchmarkSimpleSSE(b *testing.B) {
 		})
 		buf.Reset()
 	}
+}
+
+func TestEncodeWithChunkedBodyWriter(t *testing.T) {
+	mw := &MockWriter{}
+
+	w := resp.NewChunkedBodyWriter(&protocol.Response{}, mw)
+	// Set discard and call Write to skip writing HTTP headers.
+	mw.SetDiscard(true)
+	_, _ = w.Write(nil)
+	mw.SetDiscard(false)
+
+	_ = Encode(w, &Event{
+		Event: "message",
+		ID:    "1",
+		Retry: 2,
+		Data:  []byte("test data"),
+	})
+
+	assert.DeepEqual(t, "\r\nid:1\nevent:message\nretry:2\ndata:test data\n\n\r\n", string(mw.Bytes()))
+}
+
+type MockWriter struct {
+	discard bool
+	buffer  bytes.Buffer
+}
+
+var _ network.Writer = (*MockWriter)(nil)
+
+func (w *MockWriter) Malloc(n int) (buf []byte, err error) {
+	return nil, nil
+}
+
+func (w *MockWriter) WriteBinary(b []byte) (n int, err error) {
+	if w.discard {
+		return len(b), nil
+	}
+	return w.buffer.Write(b)
+}
+
+func (w *MockWriter) Flush() error {
+	return nil
+}
+
+func (w *MockWriter) Bytes() []byte {
+	return w.buffer.Bytes()
+}
+
+func (w *MockWriter) SetDiscard(discard bool) {
+	w.discard = discard
 }
