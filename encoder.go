@@ -38,6 +38,7 @@
 package sse
 
 import (
+	"bytes"
 	"io"
 	"reflect"
 	"strconv"
@@ -45,23 +46,34 @@ import (
 )
 
 func Encode(w io.Writer, e *Event) (err error) {
-	err = writeID(w, e.ID)
+	// w could be a ChunkedBodyWriter from resp.NewChunkedBodyWriter.
+	// For ChunkedBodyWriter, each call to Write writes to a new chunk.
+	// The content being written will be wrapped with \r\n before and after.
+	// This can cause the returned event to be split into many lines, like:
+	// id:\r\n\r\n1\r\n\r\n\n\r\n\r\nevent:\r\n\r\nmessage\r\n\r\n
+	// Some less robust SSE clients may be unable to handle events that are split in this way.
+	// So we need to ensure that each event is written in a single Write call.
+	buf := bytes.NewBuffer(nil)
+
+	err = writeID(buf, e.ID)
 	if err != nil {
 		return
 	}
-	err = writeEvent(w, e.Event)
+	err = writeEvent(buf, e.Event)
 	if err != nil {
 		return
 	}
-	err = writeRetry(w, e.Retry)
+	err = writeRetry(buf, e.Retry)
 	if err != nil {
 		return
 	}
-	err = writeData(w, e.Data)
+	err = writeData(buf, e.Data)
 	if err != nil {
 		return
 	}
-	return nil
+
+	_, err = buf.WriteTo(w)
+	return err
 }
 
 func writeID(w io.Writer, id string) (err error) {
